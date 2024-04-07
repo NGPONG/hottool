@@ -54,30 +54,29 @@ bool find_elf_addr(pid_t pid, const char* elfname, const char *perms_prot_flags,
 
 bool find_so_func_addr_by_mem(int pid, const std::string &soname, const std::string &funname, void *&funcaddr_plt, void *&funcaddr)
 {
-	unsigned long startaddr;
-	unsigned long endaddr;
+  unsigned long startaddr;
+  unsigned long endaddr;
 
-	if (!find_elf_addr(pid, soname.c_str(), "r-xp", startaddr, endaddr))
-	{
-		fprintf(stderr, "%s %d find %s addr error\n", __FUNCTION__, __LINE__, soname.c_str());
-		return false;
-	}
+  if (!find_elf_addr(pid, soname.c_str(), "r-xp", startaddr, endaddr)) {
+    fprintf(stderr, "%s %d find %s addr error\n", __FUNCTION__, __LINE__, soname.c_str());
+    return false;
+  }
 
-	Elf64_Ehdr targetso;
-	int ret = cross_proc_read(pid, (char *)startaddr, (char *)&targetso, sizeof(targetso));
-	if (ret != 0)
-	{
-		fprintf(stderr, "%s %d get %s elf header data error\n", __FUNCTION__, __LINE__, soname.c_str());
-		return false;
-	}
-	if (targetso.e_ident[EI_MAG0] != ELFMAG0 ||
-			targetso.e_ident[EI_MAG1] != ELFMAG1 ||
-			targetso.e_ident[EI_MAG2] != ELFMAG2 ||
-			targetso.e_ident[EI_MAG3] != ELFMAG3)
-	{
-		fprintf(stderr, "%s %d %s elf header magic error\n", __FUNCTION__, __LINE__, soname.c_str());
-		return false;
-	}
+  Elf64_Ehdr targetso;
+  int ret = cross_proc_read(pid, (char *)startaddr, (char *)&targetso, sizeof(targetso));
+  if (ret != 0)
+  {
+  	fprintf(stderr, "%s %d get %s elf header data error\n", __FUNCTION__, __LINE__, soname.c_str());
+  	return false;
+  }
+  if (targetso.e_ident[EI_MAG0] != ELFMAG0 ||
+  		targetso.e_ident[EI_MAG1] != ELFMAG1 ||
+  		targetso.e_ident[EI_MAG2] != ELFMAG2 ||
+  		targetso.e_ident[EI_MAG3] != ELFMAG3)
+  {
+  	fprintf(stderr, "%s %d %s elf header magic error\n", __FUNCTION__, __LINE__, soname.c_str());
+  	return false;
+  }
 
 	fprintf(stderr, "%s %d %p read head ok startaddr:%lu, e_she_shoff:%lu, e_shnum:%d, e_shentsize:%d, e_shstrndx:%d\n", __FUNCTION__, __LINE__, startaddr, targetso.e_shoff, targetso.e_shnum, targetso.e_shentsize, targetso.e_shstrndx);
 
@@ -490,13 +489,13 @@ bool find_so_func_addr_by_file(int pid, const std::string &sopath, const std::st
 	funcaddr = func;
 
 	fprintf(stderr, "%s %d %s %s find succ in plt %lx, old func: %p\n", __FUNCTION__, __LINE__, soname.c_str(), funname.c_str(), funcaddr_plt, func);
-	
+
 	munmap(sofileaddr, sofilelen);
 	return true;
 }
 
-bool find_elf_fun_addr_by_file(int pid, const std::string &elfpath, const std::string &funcname, void *&funcaddr_plt, void *&funcaddr, int elffd)
-{
+bool find_elf_fun_addr_by_file(int pid, const std::string &elfpath, const std::string &funcname, void *&funcaddr_plt, void *&funcaddr, int elffd) {
+  // 获取 elf 文件名
 	int pos = elfpath.find_last_of("/");
 	std::string elfname = elfpath;
 	if (-1 != pos)
@@ -504,8 +503,9 @@ bool find_elf_fun_addr_by_file(int pid, const std::string &elfpath, const std::s
 		elfname = elfpath.substr(pos + 1);
 	}
 
+  // 远程查询正在执行的efl文件其首部内存空间
 	uint64_t elfbeginvalue, elfendvalue;
-	if (!find_elf_addr(pid, elfname.c_str(), "r-xp", elfbeginvalue, elfendvalue))
+	if (!find_elf_addr(pid, elfname.c_str(), "r--p", elfbeginvalue, elfendvalue))
 	{
 		fprintf(stderr, "%s %d find %s addr error\n", __FUNCTION__, __LINE__, elfname.c_str());
 		return false;
@@ -513,6 +513,7 @@ bool find_elf_fun_addr_by_file(int pid, const std::string &elfpath, const std::s
 
 	fprintf(stderr, "%s %d find %s addr succ elfbeginvalue %lx, elfendvalue %lx\n", __FUNCTION__, __LINE__, elfname.c_str(), elfbeginvalue, elfendvalue);
 
+  // 依据获取到的内存空间构造 ELF 头部信息
 	Elf64_Ehdr targetelf;
 	int ret = cross_proc_read(pid, (char *)elfbeginvalue, (char *)&targetelf, sizeof(targetelf));
 
@@ -522,35 +523,36 @@ bool find_elf_fun_addr_by_file(int pid, const std::string &elfpath, const std::s
 		return false;
 	}
 
-    if (targetelf.e_ident[EI_MAG0] != ELFMAG0 ||
-        targetelf.e_ident[EI_MAG1] != ELFMAG1 ||
-        targetelf.e_ident[EI_MAG2] != ELFMAG2 ||
-        targetelf.e_ident[EI_MAG3] != ELFMAG3)
-	{
-        fprintf(stderr, "%s %d not valid elf header /proc/%d/maps %lu\n", __FUNCTION__, __LINE__, pid, elfbeginvalue);
-        return false;
-    }
+  // 验证 ELF 头部信息是否合法
+  if (
+    targetelf.e_ident[EI_MAG0] != ELFMAG0 ||
+    targetelf.e_ident[EI_MAG1] != ELFMAG1 ||
+    targetelf.e_ident[EI_MAG2] != ELFMAG2 ||
+    targetelf.e_ident[EI_MAG3] != ELFMAG3
+  ) {
+    fprintf(stderr, "%s %d not valid elf header /proc/%d/maps %lu\n", __FUNCTION__, __LINE__, pid, elfbeginvalue);
+    return false;
+  }
 
-    fprintf(stderr, "%s %d read head ok %lx, e_shoff:%lu, e_shnum:%d, e_shentsize:%d, e_shstrndx:%d\n", __FUNCTION__, __LINE__, elfbeginvalue, targetelf.e_shoff, targetelf.e_shnum, targetelf.e_shentsize, targetelf.e_shstrndx);
+  fprintf(stderr, "%s %d read head ok %lx, e_shoff:%lu, e_shnum:%d, e_shentsize:%d, e_shstrndx:%d\n", __FUNCTION__, __LINE__, elfbeginvalue, targetelf.e_shoff, targetelf.e_shnum, targetelf.e_shentsize, targetelf.e_shstrndx);
 
+  // 获取文件的大小
 	struct stat st;
-	ret = fstat(elffd, &st);
-	if (ret < 0)
-	{
-        fprintf(stderr, "%s %d fstat fail %s %d\n", __FUNCTION__, __LINE__, elfpath.c_str(), elffd);
-        return false;
+  ret = fstat(elffd, &st);
+  if (ret < 0) {
+    fprintf(stderr, "%s %d fstat fail %s %d\n", __FUNCTION__, __LINE__, elfpath.c_str(), elffd);
+    return false;
 	}
-
 	int elffilelen = st.st_size;
 
+  // 使用mmap读取elf文件数据
 	char *elffileaddr = (char *)mmap(NULL, elffilelen, PROT_READ, MAP_PRIVATE, elffd, 0);
-
-	if (elffileaddr == MAP_FAILED)
-	{
+	if (elffileaddr == MAP_FAILED) {
 		fprintf(stderr, "%s %d mmap fail %s %d\n", __FUNCTION__, __LINE__, elfpath.c_str(), elffd);
 		return false;
 	}
 
+  // 对比 mmap 读取的和跨进程读取的数据(elf头部数据)是否一致
 	if (memcmp(elffileaddr, &targetelf, sizeof(targetelf)) != 0)
 	{
 		munmap(elffileaddr, elffilelen);
@@ -558,6 +560,7 @@ bool find_elf_fun_addr_by_file(int pid, const std::string &elfpath, const std::s
 		return false;
 	}
 
+  // 初始化 elf 文件各种段的数据; readelf -S
 	Elf64_Shdr sections[targetelf.e_shnum];
 	memcpy(&sections, elffileaddr + targetelf.e_shoff, sizeof(sections));
 
@@ -568,6 +571,7 @@ bool find_elf_fun_addr_by_file(int pid, const std::string &elfpath, const std::s
 	char shsectionname[shsection.sh_size];
 	memcpy(shsectionname, elffileaddr + shsection.sh_offset, sizeof(shsectionname));
 
+  // 此处查询各内存段的下标
 	int pltindex = -1;
 	int dynsymindex = -1;
 	int dynstrindex = -1;
@@ -626,19 +630,21 @@ bool find_elf_fun_addr_by_file(int pid, const std::string &elfpath, const std::s
 		return false;
 	}
 
+  // 读取内存段的数据; readelf -S
+
 	Elf64_Shdr &pltsection = sections[pltindex];
 	fprintf(stderr, "%s %d pltindex:%d, sh_offset:%ld, sh_size:%ld \n", __FUNCTION__, __LINE__, pltindex, pltsection.sh_offset, pltsection.sh_size);
 
-	Elf64_Shdr &dynsymsection = sections[dynsymindex];
-    Elf64_Sym sym[dynsymsection.sh_size / sizeof(Elf64_Sym)];
-    memcpy(&sym, elffileaddr + dynsymsection.sh_offset, sizeof(sym));
-	fprintf(stderr, "%s %d dynsymindex:%d, sh_offset:%ld, sh_size:%ld \n", __FUNCTION__, __LINE__, dynsymindex, dynsymsection.sh_offset, dynsymsection.sh_size);
+  Elf64_Shdr &dynsymsection = sections[dynsymindex];
+  Elf64_Sym sym[dynsymsection.sh_size / sizeof(Elf64_Sym)];
+  memcpy(&sym, elffileaddr + dynsymsection.sh_offset, sizeof(sym));
+  fprintf(stderr, "%s %d dynsymindex:%d, sh_offset:%ld, sh_size:%ld \n", __FUNCTION__, __LINE__, dynsymindex, dynsymsection.sh_offset, dynsymsection.sh_size);
 
-	Elf64_Shdr &dynstrsection = sections[dynstrindex];
-   // char dynstr[dynstrsection.sh_size];
-	std::string dynstr;
-	dynstr.resize(dynstrsection.sh_size);
-    memcpy(const_cast<char *>(dynstr.c_str()), elffileaddr + dynstrsection.sh_offset, dynstrsection.sh_size);
+  Elf64_Shdr &dynstrsection = sections[dynstrindex];
+  // char dynstr[dynstrsection.sh_size];
+  std::string dynstr;
+  dynstr.resize(dynstrsection.sh_size);
+  memcpy(const_cast<char *>(dynstr.c_str()), elffileaddr + dynstrsection.sh_offset, dynstrsection.sh_size);
 
 	fprintf(stderr, "%s %d dynstrindex:%d, sh_offset:%ld, sh_size:%ld \n", __FUNCTION__, __LINE__, dynstrindex, dynstrsection.sh_offset, dynstrsection.sh_size);
 
@@ -660,6 +666,7 @@ bool find_elf_fun_addr_by_file(int pid, const std::string &elfpath, const std::s
 		return false;
 	}
 
+  // 如果符号已定义，则此步骤会通过，因为 st_value 和 st_size 会被初始化为 0 并作为一个占位符的存在
 	Elf64_Sym &targetsym = sym[symfuncindex];
 	if (targetsym.st_shndx != SHN_UNDEF && targetsym.st_value != 0 && targetsym.st_size != 0)
 	{
@@ -680,6 +687,8 @@ bool find_elf_fun_addr_by_file(int pid, const std::string &elfpath, const std::s
 		}
 
 	}
+
+  // 否则关注 rela.plt 内存段的数据，获取一些偏移，然后直接直接访问远程进程的虚拟地址空间并初始化 funcaddr 和 funcaddr_plt
 
 	Elf64_Shdr &relapltsection = sections[relapltindex];
 
@@ -723,7 +732,7 @@ bool find_elf_fun_addr_by_file(int pid, const std::string &elfpath, const std::s
 	funcaddr = func;
 
 	fprintf(stderr, "%s %d %s %s find succ in plt %lx, old func: %p\n", __FUNCTION__, __LINE__, elfname.c_str(), funcname.c_str(), funcaddr_plt, func);
-	
+
 	munmap(elffileaddr, elffilelen);
 	return true;
 }
@@ -1164,7 +1173,7 @@ bool find_so_variable_addr_by_file(int pid, const std::string &sopath, const std
 	variableaddr = variable;
 
 	fprintf(stderr, "%s %d %s %s find succ in got %lx, old addr: %p\n", __FUNCTION__, __LINE__, soname.c_str(), variablename.c_str(), variableaddr_got, variableaddr);
-	
+
 	munmap(sofileaddr, sofilelen);
 	return true;
 }
@@ -1397,7 +1406,7 @@ bool find_elf_variable_addr_by_file(int pid, const std::string &elfpath, const s
 	variableaddr = variable;
 
 	fprintf(stderr, "%s %d %s %s find succ in got %lx, old addr: %p\n", __FUNCTION__, __LINE__, elfname.c_str(), variablename.c_str(), variableaddr_got, variableaddr);
-	
+
 	munmap(elffileaddr, elffilelen);
 	return true;
 }

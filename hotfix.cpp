@@ -24,6 +24,9 @@ int hottool_hotfix(pid_t pid, int argc, char *argv[], void *&back_got_plt, void 
 
 		int fd = open(argv[4], O_RDONLY);
 
+    // 依据函数名(argv[4])查找其所在的地址，可能是直接查找 elf 文件中的定义，抑或查询远程进程中的虚拟地址空间
+    // 下面两个函数的逻辑是类似的，只是查找数据所做的准备不同，前者主要是依据elf文件本身中的定义去寻找，而后者是直接全部在远程进程的地址空间中查找
+
 		if (typestr == "1")
 		{
 			if (!find_elf_fun_addr_by_file(pid, argv[4], argv[5], func_gotplt, old_funcaddr, fd))

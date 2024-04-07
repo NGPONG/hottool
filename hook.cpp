@@ -16,7 +16,7 @@
 #include <stdlib.h>
 #include <dlfcn.h>
 
-const char *libcprefix = "libc-";
+const char *libcprefix = "libc";
 char *gpcalladdr = NULL;
 //unsigned long glibcstartaddr;
 uint64_t gbackupcode = 0;
@@ -162,7 +162,7 @@ int syscall_fun(pid_t pid, uint64_t &retval, uint64_t syscallno, uint64_t arg1 =
 
 bool init_hook_env(pid_t pid)
 {
-	fprintf(stderr, "%s %d start\n", __FUNCTION__, __LINE__);
+  fprintf(stderr, "%s %d start\n", __FUNCTION__, __LINE__);
 	int ret = ptrace(PTRACE_ATTACH, pid, 0, 0);
 	if (ret < 0)
 	{
@@ -183,18 +183,26 @@ bool init_hook_env(pid_t pid)
 		return false;
 	}
 	uint64_t code;
-	ret = cross_proc_read(pid, (char *)libcstartaddr, (char *)&code, sizeof(code));
+	ret = cross_proc_read(pid, (char *)(libcstartaddr + 8), (char *)&code, sizeof(code));
 	if (ret != 0)
-	{
-		fprintf(stderr, "%s %d read libc code error %d\n", __FUNCTION__, __LINE__, errno);
+  {
+    fprintf(stderr, "%s %d read libc code error %d\n", __FUNCTION__, __LINE__, errno);
 		return false;
 	}
-//	glibcstartaddr = libcstartaddr;
-	gpcalladdr = (char *)(libcstartaddr + 8);	//e_iden[8-16]
-	gbackupcode = code;
+  // glibcstartaddr = libcstartaddr;
+	gpcalladdr = (char *)(libcstartaddr + 8);	// 指向libc库开始偏移8byte后的指针
+	gbackupcode = code; // libc库前8byte的数据
 	fprintf(stderr, "%s %d ----- %p %p %lx\n", __FUNCTION__, __LINE__, libcstartaddr, gpcalladdr,  gbackupcode);
 	uint64_t retval = 0;
-	ret = syscall_fun(pid, retval, syscall_sys_mmap, 0, callstack_len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_GROWSDOWN, -1, 0);
+
+  // 此处的逻辑就是远程控制进程去调用 mmap 创建一块内存空间，即创建一块调用栈，实现逻辑：
+  // 1. 找到一块合适的内存段(可写的、相对安全且没有其它依赖的，比如一些安全控制的问题)，作者这里选择的是 libc 内存段往后偏移八个字节的位置
+  // 2. 为什么要偏移八个字节，这么做的目的可能是为了避开写坏了elf文件头部的一些声明。
+  // 3. 在找到合适的内存段后则写入一个 syscall 的指令用于调用 mmap 创建一块内存区域，并设置 IP 寄存器为写入内存开始的代码，然后 ptrace 恢复进程的执行
+  // 3. 当远程进程开始执行后，使用 waitpid 开始新的一轮等待，等待进程执行完毕后检查错误码和特殊信号查看是否有异常返回
+  // 4. 当一切结束后，恢复在写入内存那一刻开始时寄存器快照，并且恢复修改的内存数据为原来的数据，避免一些未定义的行为
+  // 5. 写入的内存区域可能是像充当一个调用栈，目的是为了远程调用进程的某些函数时不破坏进程当前的栈
+  ret = syscall_fun(pid, retval, syscall_sys_mmap, 0, callstack_len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_GROWSDOWN, -1, 0);
 	if (ret != 0)
 	{
 		fprintf(stderr, "%s %d syscall error %d\n", __FUNCTION__, __LINE__, ret);
@@ -328,7 +336,7 @@ bool funcall_fun(int pid, uint64_t &retval, void *funcaddr, uint64_t arg1 = 0, u
 			break;
 		}
 	}
-	
+
 	if (!errsv)
 	{
 		int ret = ptrace(PTRACE_GETREGS, pid, 0, &regs);
@@ -362,9 +370,9 @@ bool funcall_fun(int pid, uint64_t &retval, void *funcaddr, uint64_t arg1 = 0, u
 
 bool cross_alloc_string_mem(int pid, const std::string &str, void *&targetaddr, int &targetlen)
 {
-	int slen = str.length() + 1;
-	int pagesize = sysconf(_SC_PAGESIZE);
-	int len = ((slen + pagesize - 1) / pagesize) *pagesize;
+  int slen = str.length() + 1;
+  int pagesize = sysconf(_SC_PAGESIZE);
+  int len = ((slen + pagesize - 1) / pagesize) * pagesize;
 	fprintf(stderr, "%s %d start call mmap %d %d\n", __FUNCTION__, __LINE__, str.length(), len);
 	uint64_t retval = 0;
 	int ret = syscall_fun(pid, retval, syscall_sys_mmap, 0, len, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS | MAP_GROWSDOWN, -1, 0);
@@ -424,6 +432,7 @@ bool inject_so(int pid, const std::string &sopath, uint64_t &handle)
 
 	fprintf(stderr, "%s %d start inject so %s\n", __FUNCTION__, __LINE__, abspath);
 
+  // 查询远程进程虚拟地址空间中，dlopen函数的地址，意味着远程进程至少需要使用 ldl 的编译选项
 	void *libc_dlopen_mode_funcaddr_plt = 0;
 	void *libc_dlopen_mode_funcaddr = 0;
 	if (!find_so_func_addr_by_mem(pid, libcprefix, "__libc_dlopen_mode", libc_dlopen_mode_funcaddr_plt, libc_dlopen_mode_funcaddr))
@@ -434,7 +443,8 @@ bool inject_so(int pid, const std::string &sopath, uint64_t &handle)
 
 	void *dlopen_straddr = 0;
 	int dlopen_strlen = 0;
-	
+
+  // 此处远程调用进程的 mmap 函数构建一个匿名映射空间，并将 abspath 写入并返回 dlopen_straddr
 	if (!cross_alloc_string_mem(pid, abspath, dlopen_straddr, dlopen_strlen))
 	{
 		fprintf(stderr, "%s %d failed to cross_alloc_string_mem %s\n", __FUNCTION__, __LINE__, abspath);
@@ -488,7 +498,7 @@ bool cross_dlopen(pid_t pid, const std::string &sopath, uint64_t &handle)
 bool close_so(int pid, const std::string &sopath, uint64_t handle)
 {
 	fprintf(stderr, "%s %d start sopath=%s, handle = %lu\n", __FUNCTION__, __LINE__, sopath.c_str(), handle);
-	
+
 	void *libc_dlclose_funcaddr_plt = 0;
 	void *libc_dlclose_funcaddr = 0;
 
